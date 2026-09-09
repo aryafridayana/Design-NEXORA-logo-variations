@@ -1,0 +1,10 @@
+{
+  "description": "Generates customizable company logos featuring dynamic geometric arrow symbols and modern typography with multiple color and layout variations.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

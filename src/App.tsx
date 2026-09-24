@@ -242,7 +242,7 @@ function waitForAssets(frame: HTMLIFrameElement): Promise<unknown> {
 // dokumennya tetap bisa diedit di Word.
 async function exportWord(nodes: HTMLElement[], name: string) {
   const parts: string[] = []
-  for (const n of nodes) parts.push(await toStaticHtml(n))
+  for (const n of nodes) parts.push(await toDocFriendlyHtml(n))
   const body = parts.join('<br clear="all" style="page-break-before:always">')
 
   const html =
@@ -256,38 +256,263 @@ async function exportWord(nodes: HTMLElement[], name: string) {
     "@page WordSection1 { size: 21cm 29.7cm; margin: 1.2cm; }" +
     "div.WordSection1 { page: WordSection1; }" +
     "body { font-family: Inter, Calibri, Arial, sans-serif; font-size: 11pt; }" +
+    "table { border-collapse: collapse; }" +
+    "td { vertical-align: top; }" +
     "img { max-width: 100%; }" +
     "</style></head><body><div class=\"WordSection1\">" + body + "</div></body></html>"
 
   saveBlob(new Blob(["﻿", html], { type: "application/msword" }), slug(name) + ".doc")
 }
 
-// Word tidak mengerti <svg> inline, jadi setiap SVG dirasterisasi dan
-// setiap gambar diubah jadi data URI supaya file-nya berdiri sendiri.
-async function toStaticHtml(node: HTMLElement): Promise<string> {
-  const clone = node.cloneNode(true) as HTMLElement
-  const srcImgs = Array.from(node.querySelectorAll("img"))
-  const dstImgs = Array.from(clone.querySelectorAll("img"))
-  const srcSvgs = Array.from(node.querySelectorAll("svg"))
-  const dstSvgs = Array.from(clone.querySelectorAll("svg"))
+// ── Konversi DOM → HTML yang dimengerti Word DAN Google Docs ────────
+// Google Docs membuang flexbox, grid, position:absolute, transform dan
+// border-radius saat impor. Satu-satunya primitif tata letak yang dia
+// hormati adalah <table>, jadi setiap baris flex/grid diubah jadi baris
+// tabel dan semua posisi absolut dikembalikan ke alur normal.
 
-  for (let i = 0; i < srcImgs.length; i++) {
-    const data = await imgToDataUrl(srcImgs[i])
-    if (data) dstImgs[i].setAttribute("src", data)
+const DOC_FONT = "Inter, Calibri, Arial, sans-serif"
+const DOC_COLUMN = 624 // lebar kolom teks Google Docs (Letter, margin 1 inci)
+let docScale = 1
+const px = (v: number, min = 0) => Math.max(min, Math.round(v * docScale)) + "px"
+const PASS_TAGS = new Set(["table", "thead", "tbody", "tfoot", "tr", "td", "th", "p", "span", "b", "strong", "i", "em", "u", "br", "ul", "ol", "li"])
+
+function num(v: string) {
+  const n = parseFloat(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+function hex(color: string): string {
+  const m = color.match(/rgba?\(([^)]+)\)/)
+  if (!m) return color
+  const p = m[1].split(",").map(v => parseFloat(v))
+  let [r, g, b] = [p[0], p[1], p[2]]
+  const a = p.length > 3 ? p[3] : 1
+  if (a < 1) {
+    // Word/Docs tidak paham alpha — campur dulu dengan putih
+    r = r * a + 255 * (1 - a)
+    g = g * a + 255 * (1 - a)
+    b = b * a + 255 * (1 - a)
   }
+  const h = (v: number) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")
+  return "#" + h(r) + h(g) + h(b)
+}
 
-  for (let i = 0; i < srcSvgs.length; i++) {
-    const box = srcSvgs[i].getBoundingClientRect()
-    const png = await svgToPng(srcSvgs[i])
-    if (!png) { dstSvgs[i].remove(); continue }
+function isTransparent(c: string) {
+  return !c || c === "transparent" || /rgba\([^)]*,\s*0\s*\)$/.test(c)
+}
+
+function safeStyle(cs: CSSStyleDeclaration): string {
+  const out: string[] = []
+  out.push("font-family:" + DOC_FONT)
+  out.push("font-size:" + px(num(cs.fontSize), 1))
+  if (num(cs.fontWeight) >= 600) out.push("font-weight:bold")
+  if (cs.fontStyle !== "normal") out.push("font-style:" + cs.fontStyle)
+  out.push("color:" + hex(cs.color))
+  if (cs.letterSpacing !== "normal" && num(cs.letterSpacing) !== 0) out.push("letter-spacing:" + px(num(cs.letterSpacing)))
+  if (cs.lineHeight !== "normal") out.push("line-height:" + px(num(cs.lineHeight), 1))
+  if (cs.textAlign === "center" || cs.textAlign === "right") out.push("text-align:" + cs.textAlign)
+  if (cs.textTransform !== "none") out.push("text-transform:" + cs.textTransform)
+  if (cs.whiteSpace === "nowrap" || cs.whiteSpace === "pre") out.push("white-space:nowrap")
+  if (!isTransparent(cs.backgroundColor)) out.push("background-color:" + hex(cs.backgroundColor))
+
+  for (const side of ["top", "right", "bottom", "left"] as const) {
+    const bw = num(cs.getPropertyValue("border-" + side + "-width"))
+    const bs = cs.getPropertyValue("border-" + side + "-style")
+    if (bw > 0 && bs !== "none") {
+      out.push(`border-${side}:${px(bw, 1)} ${bs} ${hex(cs.getPropertyValue("border-" + side + "-color"))}`)
+    }
+    const pad = num(cs.getPropertyValue("padding-" + side))
+    if (pad > 0) out.push(`padding-${side}:${px(pad)}`)
+  }
+  for (const side of ["top", "bottom"] as const) {
+    const mg = num(cs.getPropertyValue("margin-" + side))
+    if (mg > 0) out.push(`margin-${side}:${px(mg)}`)
+  }
+  return out.join(";")
+}
+
+// Garis pemisah (div kosong berlatar warna atau hanya punya border) tidak
+// punya tinggi di Docs. Diwakili tabel satu sel supaya tetap kelihatan.
+function ruleRow(cs: CSSStyleDeclaration): HTMLElement | null {
+  const h = num(cs.height)
+  const hasBorder = (["top", "right", "bottom", "left"] as const).some(
+    s => num(cs.getPropertyValue("border-" + s + "-width")) > 0 && cs.getPropertyValue("border-" + s + "-style") !== "none",
+  )
+  const hasFill = !isTransparent(cs.backgroundColor) && h > 0 && h <= 10
+  if (!hasBorder && !hasFill) return null
+
+  const table = document.createElement("table")
+  table.setAttribute("width", "100%")
+  table.setAttribute("cellpadding", "0")
+  table.setAttribute("cellspacing", "0")
+  table.setAttribute("style", "border-collapse:collapse;width:100%")
+  const tr = document.createElement("tr")
+  const td = document.createElement("td")
+  let st = "font-size:1px;line-height:1px;"
+  if (hasFill) st += `background-color:${hex(cs.backgroundColor)};height:${Math.max(1, Math.round(h))}px;`
+  for (const side of ["top", "bottom"] as const) {
+    const bw = num(cs.getPropertyValue("border-" + side + "-width"))
+    const bs = cs.getPropertyValue("border-" + side + "-style")
+    if (bw > 0 && bs !== "none") st += `border-${side}:${Math.max(1, Math.round(bw))}px ${bs} ${hex(cs.getPropertyValue("border-" + side + "-color"))};`
+  }
+  td.setAttribute("style", st)
+  td.innerHTML = "&nbsp;"
+  tr.appendChild(td)
+  table.appendChild(tr)
+  return table
+}
+
+function gridCols(cs: CSSStyleDeclaration) {
+  const t = cs.gridTemplateColumns
+  if (!t || t === "none") return 1
+  return Math.max(1, t.trim().split(/\s+/).length)
+}
+
+function buildDocNode(src: Element, avail: number, assets: Map<Element, string>, inCell = false): Node | null {
+  const tag = src.tagName.toLowerCase()
+
+  if (tag === "svg" || tag === "img") {
+    const data = assets.get(src)
+    if (!data) return null
+    const r = src.getBoundingClientRect()
+    if (r.width < 1) return null
+    const w = Math.max(1, Math.min(Math.round(r.width * docScale), Math.round(avail * docScale)))
     const img = document.createElement("img")
-    img.setAttribute("src", png)
-    img.setAttribute("width", String(Math.round(box.width)))
-    img.setAttribute("height", String(Math.round(box.height)))
-    dstSvgs[i].replaceWith(img)
+    img.setAttribute("src", data)
+    img.setAttribute("width", String(w))
+    img.setAttribute("height", String(Math.max(1, Math.round(r.height * (w / r.width)))))
+    return img
+  }
+  if (tag === "input" || tag === "button" || tag === "script" || tag === "style" || tag === "label") {
+    if (tag !== "label") return null
   }
 
-  return clone.outerHTML
+  const cs = getComputedStyle(src)
+  if (cs.display === "none" || cs.visibility === "hidden") return null
+
+  const elKids = Array.from(src.children)
+  const hasText = Array.from(src.childNodes).some(n => n.nodeType === Node.TEXT_NODE && (n.textContent || "").trim())
+
+  if (!elKids.length && !hasText) {
+    return ruleRow(cs)
+  }
+
+  const isRow = cs.display.includes("flex") && cs.flexDirection.startsWith("row") && elKids.length >= 2 && !hasText
+  const isGrid = cs.display === "grid" && elKids.length >= 2
+
+  if (isRow || isGrid) {
+    const cols = isGrid ? gridCols(cs) : elKids.length
+    const gap = Math.round(num(cs.columnGap || cs.gap))
+    const valignMap: Record<string, string> = { "flex-start": "top", start: "top", center: "middle", "flex-end": "bottom", end: "bottom", baseline: "top", stretch: "top" }
+    const valign = valignMap[cs.alignItems] || "top"
+    const justify = cs.justifyContent
+
+    const table = document.createElement("table")
+    table.setAttribute("width", "100%")
+    table.setAttribute("cellpadding", "0")
+    table.setAttribute("cellspacing", "0")
+    table.setAttribute("style", "border-collapse:collapse;width:100%;" + safeStyle(cs))
+
+    const widths = elKids.map(k => k.getBoundingClientRect().width)
+    const box = src.getBoundingClientRect().width || widths.reduce((a, b) => a + b, 0) || 1
+    const used = widths.reduce((a, b) => a + b, 0) + gap * Math.max(0, cols - 1)
+    const free = Math.max(0, box - used)
+    const spacerPct = (share: number) => Math.max(1, Math.round((free * share / box) * 100))
+
+    const spacer = (pct: number) => {
+      const td = document.createElement("td")
+      td.setAttribute("style", `width:${pct}%;font-size:1px;line-height:1px`)
+      td.innerHTML = "&nbsp;"
+      return td
+    }
+
+    for (let i = 0; i < elKids.length; i += cols) {
+      const tr = document.createElement("tr")
+      // flexbox membagi ruang sisa; di tabel ruang itu harus jadi sel sungguhan
+      if (free > 4 && !isGrid && (justify === "flex-end" || justify === "right")) tr.appendChild(spacer(spacerPct(1)))
+      else if (free > 4 && !isGrid && justify === "center") tr.appendChild(spacer(spacerPct(0.5)))
+
+      for (let j = 0; j < cols; j++) {
+        const kid = elKids[i + j]
+        const td = document.createElement("td")
+        let st = "vertical-align:" + valign + ";"
+        if (kid) {
+          st += "width:" + Math.max(1, Math.round((isGrid ? 1 / cols : widths[i + j] / box) * 100)) + "%;"
+          if (justify === "flex-end" || justify === "right" || (justify === "space-between" && j === cols - 1 && cols > 1)) st += "text-align:right;"
+          else if (justify === "center") st += "text-align:center;"
+          if (gap > 0 && j < cols - 1) st += "padding-right:" + px(gap) + ";"
+          td.setAttribute("style", st)
+          const built = buildDocNode(kid, Math.max(48, box * (widths[i + j] / box)), assets, true)
+          if (built) td.appendChild(built)
+          tr.appendChild(td)
+          if (free > 4 && !isGrid && justify === "space-between" && j < cols - 1) {
+            tr.appendChild(spacer(spacerPct(1 / Math.max(1, cols - 1))))
+          }
+        } else {
+          td.setAttribute("style", st)
+          td.innerHTML = "&nbsp;"
+          tr.appendChild(td)
+        }
+      }
+      if (free > 4 && !isGrid && justify === "center") tr.appendChild(spacer(spacerPct(0.5)))
+      table.appendChild(tr)
+    }
+    return table
+  }
+
+  const outTag = PASS_TAGS.has(tag) ? tag : "div"
+  const el = document.createElement(outTag)
+  let style = safeStyle(cs)
+
+  if (!elKids.length && hasText) {
+    const line = num(cs.lineHeight) || num(cs.fontSize) * 1.35
+    const h = src.getBoundingClientRect().height
+    if (h > 0 && h <= line * 1.6 && !/nowrap/.test(style)) style += ";white-space:nowrap"
+  }
+
+  // lebar eksplisit dipertahankan sebagai persentase agar muat di kertas
+  const w = src.getBoundingClientRect().width
+  if (!inCell && outTag === "div" && w > 0 && w < avail * 0.96 && cs.display !== "inline") {
+    style += ";width:" + Math.max(5, Math.round((w / avail) * 100)) + "%"
+    if (cs.marginLeft === cs.marginRight && num(cs.marginLeft) > 0) style += ";margin-left:auto;margin-right:auto"
+  }
+  if (style) el.setAttribute("style", style)
+
+  for (const n of Array.from(src.childNodes)) {
+    if (n.nodeType === Node.TEXT_NODE) {
+      const t = n.textContent || ""
+      if (t.trim()) el.appendChild(document.createTextNode(t))
+    } else if (n.nodeType === Node.ELEMENT_NODE) {
+      const built = buildDocNode(n as Element, avail, assets)
+      if (built) el.appendChild(built)
+    }
+    // catatan: anak langsung mewarisi lebar induknya, jadi inCell tidak diteruskan
+  }
+  return el
+}
+
+async function collectAssets(root: HTMLElement): Promise<Map<Element, string>> {
+  const map = new Map<Element, string>()
+  for (const svg of Array.from(root.querySelectorAll("svg"))) {
+    const png = await svgToPng(svg)
+    if (png) map.set(svg, png)
+  }
+  for (const img of Array.from(root.querySelectorAll("img"))) {
+    const data = await imgToDataUrl(img)
+    if (data) map.set(img, data)
+  }
+  return map
+}
+
+async function toDocFriendlyHtml(node: HTMLElement): Promise<string> {
+  const assets = await collectAssets(node)
+  const width = node.getBoundingClientRect().width || 740
+  docScale = Math.min(1, DOC_COLUMN / width)
+  const built = buildDocNode(node, width, assets)
+  if (!built || !(built instanceof HTMLElement)) return ""
+  // akar dibuat selebar halaman supaya mengikuti margin dokumen
+  built.setAttribute("style", (built.getAttribute("style") || "").replace(/;?width:[^;]+/g, "") + ";width:100%")
+  return built.outerHTML
 }
 
 async function svgToPng(svg: SVGSVGElement, scale = 3): Promise<string | null> {
@@ -393,7 +618,7 @@ function ExportBar({ name }: { name: string }) {
       <button
         onClick={() => run("word")}
         disabled={busy !== null}
-        title="Mengunduh berkas .doc yang bisa dibuka dan diedit di Microsoft Word"
+        title="Berkas .doc bertata letak tabel — rapi dan bisa diedit di Microsoft Word maupun Google Docs"
         style={btn(false)}
       >
         {busy === "word" ? "Menyiapkan…" : "↓ Word"}

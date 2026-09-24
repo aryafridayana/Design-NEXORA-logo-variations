@@ -7,6 +7,9 @@ const NV = "#0F1E4A"   // Navy
 const SL = "#64748B"   // Slate
 const BG = "#F1F5F9"   // Page background
 const LB = "#EEF2FF"   // Light blue tint
+const INK = "#111827"  // Ink hitam (header dokumen)
+const GR = "#4B5563"   // Abu teks header
+const HR = "#D4D4D8"   // Garis rambut
 
 // ── Company constants ───────────────────────────────────────────────
 const co = {
@@ -114,23 +117,20 @@ function A4({ children }: { children: React.ReactNode }) {
 function DocHeader() {
   return (
     <div>
-      <div style={{ background: NV, padding: "20px 40px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <Logo sz={44} v="white" />
-          <div>
-            <Wordmark color="#fff" size={22} />
-            <div style={{ color: "#93C5FD", fontSize: 9, letterSpacing: "0.12em", marginTop: 2 }}>{co.tag.toUpperCase()}</div>
-          </div>
+      <div style={{ background: "#fff", padding: "28px 40px 16px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 28 }}>
+        <div>
+          <div style={{ fontSize: 21, fontWeight: 900, color: INK, letterSpacing: "0.1em", lineHeight: 1.1 }}>PT NEXT AURA SEJAHTERA</div>
+          <div style={{ fontSize: 8, fontWeight: 600, color: GR, letterSpacing: "0.24em", marginTop: 6 }}>{co.tag.toUpperCase()}</div>
         </div>
-        <div style={{ textAlign: "right", color: "#CBD5E1", fontSize: 9, lineHeight: 1.7 }}>
-          <div style={{ color: "#fff", fontWeight: 600, marginBottom: 2 }}>{co.name}</div>
+        <div style={{ textAlign: "right", color: GR, fontSize: 8.5, lineHeight: 1.8, whiteSpace: "nowrap" }}>
           <div>{co.a1}</div>
           <div>{co.a2}</div>
-          <div>T: {co.tel}  F: {co.fax}</div>
-          <div>{co.email}  |  {co.web}</div>
+          <div>T: {co.tel}  ·  F: {co.fax}</div>
+          <div>{co.email}  ·  {co.web}</div>
         </div>
       </div>
-      <div style={{ height: 4, background: `linear-gradient(90deg, ${BL}, #60A5FA)` }} />
+      <div style={{ margin: "0 40px", borderTop: `2px solid ${INK}` }} />
+      <div style={{ margin: "2.5px 40px 0", borderTop: `1px solid ${HR}` }} />
     </div>
   )
 }
@@ -138,8 +138,8 @@ function DocHeader() {
 function DocFooter() {
   return (
     <div style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}>
-      <div style={{ height: 2, background: `linear-gradient(90deg, ${BL}, #60A5FA)` }} />
-      <div style={{ background: NV, padding: "8px 40px", display: "flex", justifyContent: "space-between", color: "#94A3B8", fontSize: 8 }}>
+      <div style={{ margin: "0 40px", borderTop: `1px solid ${HR}` }} />
+      <div style={{ padding: "8px 40px 12px", display: "flex", justifyContent: "space-between", color: "#9CA3AF", fontSize: 8 }}>
         <span>{co.name}  |  NPWP: {co.npwp}</span>
         <span>{co.web}</span>
       </div>
@@ -581,7 +581,7 @@ function PageEmail() {
         </div>
         {/* Email header meta */}
         <div style={{ background: "#fff", padding: "12px 20px", borderBottom: "1px solid #E2E8F0", fontSize: 10, color: SL, lineHeight: 1.8 }}>
-          <div><b style={{ color: NV }}>Dari:</b> NEXORA &lt;noreply@nexora.co.id&gt;</div>
+          <div><b style={{ color: NV }}>Dari:</b> PT Next Aura Sejahtera &lt;noreply@nexora.co.id&gt;</div>
           <div><b style={{ color: NV }}>Kepada:</b> [Nama Penerima] &lt;penerima@email.com&gt;</div>
           <div><b style={{ color: NV }}>Subjek:</b> [Subjek Email] — PT Next Aura Sejahtera</div>
         </div>
@@ -589,11 +589,11 @@ function PageEmail() {
         <div style={{ background: "#F8FAFC", padding: 24 }}>
           <div style={{ background: "#fff", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 8px rgba(0,0,0,.06)" }}>
             {/* Header */}
-            <div style={{ background: NV, padding: "24px 32px", display: "flex", alignItems: "center", gap: 12 }}>
-              <Logo sz={36} v="white" />
-              <Wordmark color="#fff" size={20} />
+            <div style={{ background: "#fff", padding: "24px 32px 16px" }}>
+              <div style={{ fontSize: 17, fontWeight: 900, color: INK, letterSpacing: "0.09em" }}>PT NEXT AURA SEJAHTERA</div>
+              <div style={{ fontSize: 7.5, fontWeight: 600, color: GR, letterSpacing: "0.22em", marginTop: 5 }}>{co.tag.toUpperCase()}</div>
             </div>
-            <div style={{ height: 3, background: `linear-gradient(90deg, ${BL}, #60A5FA)` }} />
+            <div style={{ height: 2, background: INK }} />
             {/* Body content */}
             <div style={{ padding: "28px 32px" }}>
               <p style={{ fontSize: 13, fontWeight: 700, color: NV, marginTop: 0 }}>Kepada Yth. Bapak/Ibu [Nama],</p>
@@ -950,27 +950,25 @@ function PageProposal() {
       <PageTitle title="Proposal" sub="Cover halaman proposal bisnis" />
       <A4>
         {/* Cover */}
-        <div style={{ background: NV, minHeight: 400, padding: "48px 48px 40px", display: "flex", flexDirection: "column", justifyContent: "space-between", position: "relative", overflow: "hidden" }}>
-          <div style={{ position: "absolute", right: -60, top: -60, width: 280, height: 280, borderRadius: "50%", border: `60px solid ${BL}`, opacity: 0.15 }} />
-          <div style={{ position: "absolute", right: 60, bottom: -80, width: 200, height: 200, borderRadius: "50%", border: `40px solid ${BL}`, opacity: 0.1 }} />
-          <div style={{ display: "flex", alignItems: "center", gap: 14, zIndex: 1 }}>
-            <Logo sz={48} v="white" />
-            <div>
-              <Wordmark color="#fff" size={22} />
-              <div style={{ fontSize: 8, color: "#93C5FD", letterSpacing: "0.15em", marginTop: 2 }}>{co.tag.toUpperCase()}</div>
-            </div>
+        <div style={{ background: "#fff", minHeight: 400, padding: "44px 48px 40px", display: "flex", flexDirection: "column", justifyContent: "space-between", position: "relative", overflow: "hidden" }}>
+          <div style={{ position: "absolute", right: -60, top: -60, width: 280, height: 280, borderRadius: "50%", border: "60px solid #F2F2F3" }} />
+          <div style={{ position: "absolute", right: 60, bottom: -80, width: 200, height: 200, borderRadius: "50%", border: "40px solid #F7F7F8" }} />
+          <div style={{ zIndex: 1 }}>
+            <div style={{ fontSize: 20, fontWeight: 900, color: INK, letterSpacing: "0.1em" }}>PT NEXT AURA SEJAHTERA</div>
+            <div style={{ fontSize: 8, fontWeight: 600, color: GR, letterSpacing: "0.24em", marginTop: 6 }}>{co.tag.toUpperCase()}</div>
+            <div style={{ marginTop: 14, borderTop: `1px solid ${HR}`, width: 300 }} />
           </div>
           <div style={{ zIndex: 1 }}>
-            <div style={{ width: 48, height: 3, background: BL, borderRadius: 2, marginBottom: 20 }} />
-            <div style={{ fontSize: 11, color: "#60A5FA", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 10 }}>Proposal Kerja Sama</div>
-            <div style={{ fontSize: 26, fontWeight: 900, color: "#fff", lineHeight: 1.2, marginBottom: 12 }}>
+            <div style={{ width: 48, height: 3, background: INK, borderRadius: 2, marginBottom: 20 }} />
+            <div style={{ fontSize: 11, color: GR, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 10 }}>Proposal Kerja Sama</div>
+            <div style={{ fontSize: 26, fontWeight: 900, color: INK, lineHeight: 1.2, marginBottom: 12 }}>
               Pengembangan Sistem<br />Informasi Terintegrasi
             </div>
-            <div style={{ fontSize: 10, color: "#94A3B8" }}>Disiapkan untuk: PT Mitra Teknologi Nusantara</div>
-            <div style={{ fontSize: 10, color: "#94A3B8", marginTop: 4 }}>09 September 2026  ·  No. PRO-2026-09-001</div>
+            <div style={{ fontSize: 10, color: GR }}>Disiapkan untuk: PT Mitra Teknologi Nusantara</div>
+            <div style={{ fontSize: 10, color: GR, marginTop: 4 }}>09 September 2026  ·  No. PRO-2026-09-001</div>
           </div>
         </div>
-        <div style={{ height: 4, background: `linear-gradient(90deg, ${BL}, #60A5FA)` }} />
+        <div style={{ height: 3, background: INK }} />
 
         {/* Intro section */}
         <div style={{ padding: "28px 48px 120px" }}>
@@ -1226,18 +1224,18 @@ function PageKwitansi() {
       <PageTitle title="Kwitansi" sub="Bukti penerimaan pembayaran resmi" />
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         {/* Main receipt */}
-        <div style={{ width: 680, background: "#fff", borderRadius: 12, border: `2px solid ${NV}`, overflow: "hidden", boxShadow: "0 2px 16px rgba(0,0,0,.08)", margin: "0 auto", fontFamily: "'Inter',sans-serif" }}>
-          <div style={{ background: NV, padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <Logo sz={34} v="white" />
-              <Wordmark color="#fff" size={16} />
+        <div style={{ width: 680, background: "#fff", borderRadius: 12, border: `2px solid ${INK}`, overflow: "hidden", boxShadow: "0 2px 16px rgba(0,0,0,.08)", margin: "0 auto", fontFamily: "'Inter',sans-serif" }}>
+          <div style={{ background: "#fff", padding: "18px 28px 12px", display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 900, color: INK, letterSpacing: "0.08em" }}>PT NEXT AURA SEJAHTERA</div>
+              <div style={{ fontSize: 7, fontWeight: 600, color: GR, letterSpacing: "0.22em", marginTop: 4 }}>{co.tag.toUpperCase()}</div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 16, fontWeight: 900, color: "#fff", letterSpacing: "0.05em" }}>KWITANSI</div>
-              <div style={{ fontSize: 8, color: "#93C5FD" }}>BUKTI PENERIMAAN PEMBAYARAN</div>
+              <div style={{ fontSize: 16, fontWeight: 900, color: INK, letterSpacing: "0.05em" }}>KWITANSI</div>
+              <div style={{ fontSize: 8, color: GR, letterSpacing: "0.04em" }}>BUKTI PENERIMAAN PEMBAYARAN</div>
             </div>
           </div>
-          <div style={{ height: 3, background: `linear-gradient(90deg, ${BL}, #60A5FA)` }} />
+          <div style={{ height: 2, background: INK }} />
 
           <div style={{ padding: "20px 28px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20, fontSize: 10 }}>

@@ -29,6 +29,7 @@ const co = {
 }
 
 // ── Navigation ──────────────────────────────────────────────────────
+
 const NAV = [
   {
     group: "Corporate Identity", items: [
@@ -50,6 +51,14 @@ const NAV = [
     ],
   },
 ]
+
+function labelOf(id: string) {
+  for (const g of NAV) {
+    const hit = g.items.find(i => i.id === id)
+    if (hit) return hit.label
+  }
+  return "Dokumen"
+}
 
 // ── Logo Image (from user upload) ───────────────────────────────────
 function Logo({ sz = 48, v = "blue" }: { sz?: number; v?: "blue" | "white" | "navy" | "black" }) {
@@ -107,7 +116,7 @@ function Wordmark({ color = BL, size = 24 }: { color?: string; size?: number }) 
 // ── A4 paper shell ──────────────────────────────────────────────────
 function A4({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ width: 740, minHeight: 1040, background: "#fff", boxShadow: "0 2px 24px rgba(0,0,0,.12)", margin: "0 auto", fontFamily: "'Inter',sans-serif", fontSize: 11, color: "#1E293B", position: "relative" }}>
+    <div data-export="1" style={{ width: 740, minHeight: 1040, background: "#fff", boxShadow: "0 2px 24px rgba(0,0,0,.12)", margin: "0 auto", fontFamily: "'Inter',sans-serif", fontSize: 11, color: "#1E293B", position: "relative" }}>
       {children}
     </div>
   )
@@ -147,6 +156,252 @@ function DocFooter() {
   )
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// EKSPOR DOKUMEN — PDF (cetak vektor) & Word (.doc)
+// Elemen yang diekspor ditandai atribut data-export pada tiap halaman.
+// ─────────────────────────────────────────────────────────────────────
+
+function exportNodes(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>("[data-export]"))
+}
+
+function slug(s: string) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+}
+
+function escapeHtml(s: string) {
+  return s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string)
+}
+
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 5000)
+}
+
+// Filter tinta stempel didefinisikan di <svg> tersembunyi yang terpisah,
+// jadi harus ikut disalin kalau dokumen memakainya.
+function withInkDefs(html: string) {
+  if (!html.includes("url(#nx-ink)")) return html
+  const defs = document.getElementById("nx-ink")?.closest("svg")
+  return defs ? defs.outerHTML + html : html
+}
+
+// ── PDF: render ulang di iframe lalu panggil dialog cetak ───────────
+// Teks tetap vektor dan ukurannya persis A4 — jauh lebih tajam
+// daripada hasil screenshot canvas.
+async function exportPdf(nodes: HTMLElement[], name: string) {
+  const frame = document.createElement("iframe")
+  frame.setAttribute("aria-hidden", "true")
+  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0"
+  document.body.appendChild(frame)
+
+  const doc = frame.contentDocument
+  if (!doc) throw new Error("Browser menolak membuat frame cetak")
+
+  doc.open()
+  doc.write(
+    '<!doctype html><html><head><meta charset="utf-8"><title>' + escapeHtml(name) + '</title>' +
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800;900&display=swap">' +
+    "<style>" +
+    "@page { size: A4; margin: 6mm; }" +
+    "html, body { margin: 0; padding: 0; background: #fff; }" +
+    "body { font-family: 'Inter', system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; }" +
+    "[data-export] { box-shadow: none !important; margin: 0 auto !important; }" +
+    ".nx-gap { height: 8mm; }" +
+    "</style></head><body>" +
+    withInkDefs(nodes.map(n => n.outerHTML).join('<div class="nx-gap"></div>')) +
+    "</body></html>",
+  )
+  doc.close()
+
+  await waitForAssets(frame)
+  frame.contentWindow?.focus()
+  frame.contentWindow?.print()
+  setTimeout(() => frame.remove(), 3000)
+}
+
+function waitForAssets(frame: HTMLIFrameElement): Promise<unknown> {
+  const doc = frame.contentDocument
+  if (!doc) return Promise.resolve()
+  const pending: Promise<unknown>[] = Array.from(doc.images)
+    .filter(img => !img.complete)
+    .map(img => new Promise(res => { img.onload = img.onerror = () => res(null) }))
+  const fonts = (doc as Document & { fonts?: { ready: Promise<unknown> } }).fonts?.ready
+  if (fonts) pending.push(fonts)
+  return Promise.race([Promise.all(pending), new Promise(res => setTimeout(res, 3000))])
+}
+
+// ── Word: HTML bergaya inline dibungkus header Office ───────────────
+// Semua style sudah inline di JSX, jadi tata letaknya ikut terbawa dan
+// dokumennya tetap bisa diedit di Word.
+async function exportWord(nodes: HTMLElement[], name: string) {
+  const parts: string[] = []
+  for (const n of nodes) parts.push(await toStaticHtml(n))
+  const body = parts.join('<br clear="all" style="page-break-before:always">')
+
+  const html =
+    '<html xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+    'xmlns:w="urn:schemas-microsoft-com:office:word" ' +
+    'xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8">' +
+    "<title>" + escapeHtml(name) + "</title>" +
+    "<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View>" +
+    "<w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->" +
+    "<style>" +
+    "@page WordSection1 { size: 21cm 29.7cm; margin: 1.2cm; }" +
+    "div.WordSection1 { page: WordSection1; }" +
+    "body { font-family: Inter, Calibri, Arial, sans-serif; font-size: 11pt; }" +
+    "img { max-width: 100%; }" +
+    "</style></head><body><div class=\"WordSection1\">" + body + "</div></body></html>"
+
+  saveBlob(new Blob(["﻿", html], { type: "application/msword" }), slug(name) + ".doc")
+}
+
+// Word tidak mengerti <svg> inline, jadi setiap SVG dirasterisasi dan
+// setiap gambar diubah jadi data URI supaya file-nya berdiri sendiri.
+async function toStaticHtml(node: HTMLElement): Promise<string> {
+  const clone = node.cloneNode(true) as HTMLElement
+  const srcImgs = Array.from(node.querySelectorAll("img"))
+  const dstImgs = Array.from(clone.querySelectorAll("img"))
+  const srcSvgs = Array.from(node.querySelectorAll("svg"))
+  const dstSvgs = Array.from(clone.querySelectorAll("svg"))
+
+  for (let i = 0; i < srcImgs.length; i++) {
+    const data = await imgToDataUrl(srcImgs[i])
+    if (data) dstImgs[i].setAttribute("src", data)
+  }
+
+  for (let i = 0; i < srcSvgs.length; i++) {
+    const box = srcSvgs[i].getBoundingClientRect()
+    const png = await svgToPng(srcSvgs[i])
+    if (!png) { dstSvgs[i].remove(); continue }
+    const img = document.createElement("img")
+    img.setAttribute("src", png)
+    img.setAttribute("width", String(Math.round(box.width)))
+    img.setAttribute("height", String(Math.round(box.height)))
+    dstSvgs[i].replaceWith(img)
+  }
+
+  return clone.outerHTML
+}
+
+async function svgToPng(svg: SVGSVGElement, scale = 3): Promise<string | null> {
+  const box = svg.getBoundingClientRect()
+  if (box.width < 1 || box.height < 1) return null
+
+  const clone = svg.cloneNode(true) as SVGSVGElement
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg")
+  clone.setAttribute("width", String(box.width))
+  clone.setAttribute("height", String(box.height))
+  clone.style.transform = ""
+
+  if (clone.outerHTML.includes("url(#nx-ink)")) {
+    const filter = document.getElementById("nx-ink")
+    if (filter) {
+      const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs")
+      defs.appendChild(filter.cloneNode(true))
+      clone.insertBefore(defs, clone.firstChild)
+    }
+  }
+
+  const src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(clone))
+  const img = new Image()
+  const ok = await new Promise<boolean>(res => {
+    img.onload = () => res(true)
+    img.onerror = () => res(false)
+    img.src = src
+  })
+  if (!ok) return null
+
+  const canvas = document.createElement("canvas")
+  canvas.width = Math.round(box.width * scale)
+  canvas.height = Math.round(box.height * scale)
+  const ctx = canvas.getContext("2d")
+  if (!ctx) return null
+  ctx.scale(scale, scale)
+  ctx.drawImage(img, 0, 0, box.width, box.height)
+  try { return canvas.toDataURL("image/png") } catch { return null }
+}
+
+async function imgToDataUrl(img: HTMLImageElement): Promise<string | null> {
+  if (img.src.startsWith("data:")) return img.src
+  if (!img.complete) {
+    await new Promise(res => { img.onload = img.onerror = () => res(null) })
+  }
+  const canvas = document.createElement("canvas")
+  canvas.width = img.naturalWidth || img.width
+  canvas.height = img.naturalHeight || img.height
+  if (!canvas.width || !canvas.height) return null
+  const ctx = canvas.getContext("2d")
+  if (!ctx) return null
+  ctx.drawImage(img, 0, 0)
+  try { return canvas.toDataURL("image/png") } catch { return null }
+}
+
+// ── Tombol unduh ────────────────────────────────────────────────────
+function ExportBar({ name }: { name: string }) {
+  const [busy, setBusy] = useState<"pdf" | "word" | null>(null)
+  const [note, setNote] = useState("")
+
+  const run = async (kind: "pdf" | "word") => {
+    const nodes = exportNodes()
+    if (!nodes.length) {
+      setNote("Halaman ini tidak punya dokumen yang bisa diunduh.")
+      setTimeout(() => setNote(""), 4000)
+      return
+    }
+    setBusy(kind)
+    try {
+      if (kind === "pdf") await exportPdf(nodes, name)
+      else await exportWord(nodes, name)
+    } catch (err) {
+      setNote("Gagal menyiapkan file: " + (err as Error).message)
+      setTimeout(() => setNote(""), 5000)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const btn = (active: boolean): React.CSSProperties => ({
+    display: "inline-flex", alignItems: "center", gap: 6,
+    padding: "7px 14px", borderRadius: 7,
+    border: `1px solid ${active ? INK : "#CBD5E1"}`,
+    background: active ? INK : "#fff",
+    color: active ? "#fff" : NV,
+    fontSize: 11, fontWeight: 600, fontFamily: "'Inter',sans-serif",
+    cursor: busy ? "wait" : "pointer", letterSpacing: "0.01em",
+    opacity: busy ? 0.6 : 1,
+  })
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+      {note && <span style={{ fontSize: 10, color: "#B91C1C" }}>{note}</span>}
+      <span style={{ fontSize: 10, color: SL }}>Unduh dokumen ini:</span>
+      <button
+        onClick={() => run("pdf")}
+        disabled={busy !== null}
+        title="Membuka dialog cetak — pilih tujuan “Save as PDF” untuk menyimpan"
+        style={btn(true)}
+      >
+        {busy === "pdf" ? "Menyiapkan…" : "↓ PDF"}
+      </button>
+      <button
+        onClick={() => run("word")}
+        disabled={busy !== null}
+        title="Mengunduh berkas .doc yang bisa dibuka dan diedit di Microsoft Word"
+        style={btn(false)}
+      >
+        {busy === "word" ? "Menyiapkan…" : "↓ Word"}
+      </button>
+    </div>
+  )
+}
+
 // ── Section title chip ──────────────────────────────────────────────
 function PageTitle({ title, sub }: { title: string; sub?: string }) {
   return (
@@ -163,7 +418,7 @@ function PageTitle({ title, sub }: { title: string; sub?: string }) {
 
 function PageLogo() {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div data-export="1" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <PageTitle title="Logo & Brand" sub="Tiga variasi resmi logo NEXORA" />
 
       {/* Original mark */}
@@ -371,6 +626,7 @@ function PageStempel() {
         </label>
       </div>
 
+      <div data-export="1">
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(390px, 1fr))", gap: 20 }}>
 
         {/* 01 — Stempel utama */}
@@ -566,6 +822,7 @@ function PageStempel() {
           ))}
         </div>
       </div>
+      </div>
     </div>
   )
 }
@@ -587,7 +844,7 @@ function PageEmail() {
         </div>
         {/* Email body */}
         <div style={{ background: "#F8FAFC", padding: 24 }}>
-          <div style={{ background: "#fff", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 8px rgba(0,0,0,.06)" }}>
+          <div data-export="1" style={{ background: "#fff", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 8px rgba(0,0,0,.06)" }}>
             {/* Header */}
             <div style={{ background: "#fff", padding: "24px 32px 16px" }}>
               <div style={{ fontSize: 17, fontWeight: 900, color: INK, letterSpacing: "0.09em" }}>PT NEXT AURA SEJAHTERA</div>
@@ -634,7 +891,7 @@ function PageKartuNama() {
     <div>
       <PageTitle title="Kartu Nama" sub="Rekomendasi desain kartu nama dua sisi (Ukuran Standar: 85 × 54 mm)" />
       
-      <div style={{ display: "flex", flexDirection: "column", gap: 48 }}>
+      <div data-export="1" style={{ display: "flex", flexDirection: "column", gap: 48 }}>
         
         {/* Variant 01 */}
         <div>
@@ -1224,7 +1481,7 @@ function PageKwitansi() {
       <PageTitle title="Kwitansi" sub="Bukti penerimaan pembayaran resmi" />
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         {/* Main receipt */}
-        <div style={{ width: 680, background: "#fff", borderRadius: 12, border: `2px solid ${INK}`, overflow: "hidden", boxShadow: "0 2px 16px rgba(0,0,0,.08)", margin: "0 auto", fontFamily: "'Inter',sans-serif" }}>
+        <div data-export="1" style={{ width: 680, background: "#fff", borderRadius: 12, border: `2px solid ${INK}`, overflow: "hidden", boxShadow: "0 2px 16px rgba(0,0,0,.08)", margin: "0 auto", fontFamily: "'Inter',sans-serif" }}>
           <div style={{ background: "#fff", padding: "18px 28px 12px", display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
             <div>
               <div style={{ fontSize: 15, fontWeight: 900, color: INK, letterSpacing: "0.08em" }}>PT NEXT AURA SEJAHTERA</div>
@@ -1371,6 +1628,7 @@ export default function App() {
 
       {/* Content */}
       <main style={{ flex: 1, overflowY: "auto", padding: "32px 28px" }}>
+        <ExportBar name={`${co.short} — ${labelOf(active)}`} />
         {pages[active]}
       </main>
     </div>
